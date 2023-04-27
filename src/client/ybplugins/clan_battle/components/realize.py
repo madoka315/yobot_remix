@@ -1,5 +1,6 @@
 import math
 import os
+import sys
 import json
 import peewee
 import base64
@@ -24,16 +25,22 @@ from .multi_cq_utils import who_am_i
 from .image_engine import download_user_profile_image, generate_combind_boss_state_image, BossStatusImageCore, get_process_image, GroupStateBlock
 
 _logger = logging.getLogger(__name__)
-FILE_PATH = os.path.dirname(__file__)
+FILE_PATH = Path(sys._MEIPASS).resolve() if "_MEIPASS" in dir(sys) else Path(__file__).resolve().parent
 
 def safe_load_json(text, back = None):
 	return text and json.loads(text) or back
+
 def text_2_pic(self, text:string, weight:int, height:int, bg_color:Tuple, text_color:string, font_size:int, text_offset:Tuple):
 	im = Image.new("RGB", (weight, height), bg_color)
 	dr = ImageDraw.Draw(im)
 	FONTS_PATH = os.path.join(FILE_PATH,'fonts')
 	FONTS = os.path.join(FONTS_PATH,'msyh.ttf')
-	font = ImageFont.truetype(FONTS, font_size)
+	try:
+    # 尝试使用指定的字体加载
+		font = ImageFont.truetype(FONTS, font_size)
+	except OSError:
+    # 加载失败时使用默认字体
+		font = ImageFont.load_default()
 	dr.text(text_offset, text, font=font, fill=text_color)
 	bio = BytesIO()
 	im.save(bio, format='PNG')
@@ -295,12 +302,16 @@ def modify(self, group_id: Groupid, cycle=None, bossData=None):
 	next_cycle_level = self._level_by_cycle(cycle and cycle+1 or group.boss_cycle+1, group.game_server)
 	now_health = safe_load_json(group.now_cycle_boss_health, {})
 	next_health = safe_load_json(group.next_cycle_boss_health, {})
+	now_cycle_level = self._level_by_cycle(cycle or group.boss_cycle, group.game_server)
 
 	for boss_num, data in bossData.items():
 		next_cycle_full_boss_health = self.setting['boss'][group.game_server][next_cycle_level][int(boss_num)-1]
 		if data["is_next"]:
-			now_health[boss_num] = 0
-			next_health[boss_num] = data["health"]
+			if now_cycle_level == next_cycle_level:
+				now_health[boss_num] = 0
+				next_health[boss_num] = data["health"]
+			else:
+				raise InputError('设置为下个周目的BOSS与当前周目BOSS不可处于不同阶段。')
 		else:
 			now_health[boss_num] = data["health"]
 			next_health[boss_num] = next_cycle_full_boss_health
@@ -693,11 +704,17 @@ def challenge(self,
 	nik = self._get_nickname_by_qqid(qqid)
 	behalf_nik = behalf and f'（{self._get_nickname_by_qqid(behalf)}代）' or ''
 	if defeat:
-		msg = '{}{}对{}号boss造成了{:,}点伤害，击败了boss\n（今日第{}刀，{}）\n'.format(
-			nik, behalf_nik, boss_num, challenge_damage, finished+1, '尾余刀' if is_continue else '收尾刀')
+		# 击败boss，补偿+1，已完成刀数需分情况
+		msg = '{}{}对{}号boss造成了{:,}点伤害，击败了boss\n（今日已完成{}刀，还有补偿刀{}刀，本刀是{}）\n'.format(
+			nik, behalf_nik, boss_num, challenge_damage,
+			finished+1 if is_continue else finished,
+			cont_blade-1 if is_continue else cont_blade+1,
+			'尾余刀' if is_continue else '收尾刀')
 	else:
-		msg = '{}{}对{}号boss造成了{:,}点伤害\n（今日第{}刀，{}）\n'.format(
-			nik, behalf_nik, boss_num, challenge_damage, finished+1, '剩余刀' if is_continue else '完整刀')
+		# 未击败boss，无论是补偿还是非补偿已出刀数+1，不会增加补偿数
+		msg = '{}{}对{}号boss造成了{:,}点伤害\n（今日已出完整刀{}刀，还有补偿刀{}刀，本刀是{}）\n'.format(
+			nik, behalf_nik, boss_num, challenge_damage, finished+1, cont_blade-1 if is_continue else cont_blade, '剩余刀' if is_continue else '完整刀')
+		
 	msg += '\n'.join(self.challenger_info_small(group, boss_num))
 
 	self._boss_status[group_id].set_result((self._boss_data_dict(group), group.boss_cycle, msg))
@@ -848,7 +865,7 @@ def get_subscribe_list(self, group_id: Groupid):
 	return back_info
 
 #挂树
-def put_on_the_tree(self, group_id: Groupid, qqid: QQid, message=None):
+def put_on_the_tree(self, group_id: Groupid, qqid: QQid, message=None, boss_num=False):
 	"""
 	放在树上
 
@@ -856,20 +873,43 @@ def put_on_the_tree(self, group_id: Groupid, qqid: QQid, message=None):
 		group_id: QQ群号
 		qqid: 挂树的霉b/菜b的QQ号
 		message: 留言
+		boss_num: [可选]指定挂树的boss，若不指定则继续查找
 	"""
 	group:Clan_group = get_clan_group(self, group_id)
 	if group is None: raise GroupNotExist
 	user = User.get_or_none(qqid=qqid)
 	if user is None: raise GroupError('请先加入公会')
+
+	if boss_num == False:
+		if not self.check_blade(group_id, qqid):
+			raise GroupError('你既没申请出刀，也没说挂哪个，挂啥子树啊 (╯‵□′)╯︵┻━┻')
+		else:
+			boss_num = self.get_in_boss_num(group_id, qqid)
+
+	boss_num = str(boss_num)
+
 	if not self.check_blade(group_id, qqid):
-		raise GroupError('你都没申请出刀，挂啥子树啊 (╯‵□′)╯︵┻━┻')
+		try:
+			self.apply_for_challenge(False, group_id, qqid, boss_num, qqid, False)
+		except GroupError as e1:
+			if '完整' in str(e1):
+				try:
+					self.apply_for_challenge(True, group_id, qqid, boss_num, qqid, False)
+				except GroupError as e2:
+					if '补偿' in str(e2):
+						raise GroupError('你今天都下班了，挂啥子树啊 (╯‵□′)╯︵┻━┻')
+					else:
+						raise GroupError(str(e2))
+			else:
+				raise GroupError(str(e1))
+	else:
+		if str(self.get_in_boss_num(group_id, qqid)) != str(boss_num):
+			raise GroupError('你申请的王和挂树的王不一样，怎么挂树啊 (╯‵□′)╯︵┻━┻')
 
 	challenging_member_list = safe_load_json(group.challenging_member_list, {})
-	boss_num = self.get_in_boss_num(group_id, qqid)
-	if not boss_num :
-		raise GroupError('你都没申请出刀，挂啥子树啊 (╯‵□′)╯︵┻━┻')
-	if challenging_member_list[boss_num][str(qqid)]['tree']:
-		raise GroupError('您已经在树上了')
+	for item in challenging_member_list.values():
+		if item.get(str(qqid)) != None and item.get(str(qqid)).get('tree'):
+			raise GroupError('您已经在树上了')
 	
 	challenging_member_list[boss_num][str(qqid)]['tree'] = True
 	challenging_member_list[boss_num][str(qqid)]['msg'] = message
@@ -879,7 +919,7 @@ def put_on_the_tree(self, group_id: Groupid, qqid: QQid, message=None):
 	self._boss_status[group_id] = asyncio.get_event_loop().create_future()
 	return '挂树惹~ (っ °Д °;)っ'
 
-
+#查树
 def query_tree(self, group_id: Groupid, user_id: QQid, boss_id=0) -> dict:
 	"""
 	Args:
@@ -910,6 +950,30 @@ def query_tree(self, group_id: Groupid, user_id: QQid, boss_id=0) -> dict:
 				result[boss_id].append((qid, challenging_member_list[boss_id][qid]['msg']))
 	return result
 
+#是否挂树
+def check_tree(self, group_id: Groupid, user_id: QQid):
+	"""
+	查查这位大聪明在不在树上，在树上返回在哪个王(int)，不在树上返回False
+
+	Args:
+		group_id: QQ群号
+		qqid: 可能挂树的大聪明的QQ号
+	"""
+	qid = str(user_id)
+	group:Clan_group = get_clan_group(self, group_id)
+	if group is None: raise GroupNotExist
+	user = User.get_or_none(qqid=user_id)
+	if user is None: raise GroupError('请先加入公会')
+	challenging_member_list = safe_load_json(group.challenging_member_list, {})
+	for i in range(1, 6):
+		try:
+			for qid in challenging_member_list[str(i)]:
+				if challenging_member_list[str(i)][qid]['tree']:
+					return i
+		except KeyError:
+			continue
+	return False
+
 
 #下树
 def take_it_of_the_tree(self, group_id: Groupid, qqid: QQid, boss_num=0, take_it_type = 0, send_web = True):
@@ -936,6 +1000,8 @@ def take_it_of_the_tree(self, group_id: Groupid, qqid: QQid, boss_num=0, take_it
 		if not boss_num :
 			raise GroupError('你都没申请出刀，下啥子树啊 (╯‵□′)╯︵┻━┻')
 		qqid = str(qqid)
+		if not challenging_member_list[boss_num][qqid]['tree']:
+			raise GroupError('你都没挂树，下啥子树啊 (╯‵□′)╯︵┻━┻')
 		challenging_member_list[boss_num][qqid]['tree'] = False
 		challenging_member_list[boss_num][qqid]['msg'] = None
 		group.challenging_member_list = json.dumps(challenging_member_list)
@@ -1131,17 +1197,22 @@ def save_slot(self, group_id: Groupid, qqid: QQid,
 		if membership.last_save_slot != today: raise UserError('您今天还没有SL过')
 		membership.last_save_slot = 0
 		membership.save()
-		return '已取消SL'
+		return '已取消SL。若已申请/挂树，需重新报告。'
 	if only_check:
 		return (membership.last_save_slot == today)
 	if membership.last_save_slot == today:
-		raise UserError('您今天已经SL过了，该不会退游戏了吧 Σ(っ °Д °;)っ')
+		raise UserError('您今天已经SL过了，该不会退游戏了吧？ Σ(っ °Д °;)っ')
 	membership.last_save_slot = today
+	if self.check_blade(group_id, qqid):
+		self.cancel_blade(group_id, qqid)
+	tree_check = self.check_tree(group_id, qqid)
+	if tree_check:
+		self.take_it_of_the_tree(group_id, qqid)
 	membership.save()
 
 	# refresh
 	self.get_member_list(group_id, nocache = True)
-	return 'SL用掉惹 Σ(っ °Д °;)っ'
+	return '已记录SL。若已申请/挂树，需重新报告。 Σ(っ °Д °;)っ'
 
 #记录伤害/清空伤害
 def report_hurt(self, s, hurt, group_id:Groupid, qqid:QQid, clean_type = 0):
@@ -1220,7 +1291,7 @@ def challenger_info_small(self, group:Clan_group, boss_num, msg:List = None):
 			if info['behalf']:
 				behalf = self._get_nickname_by_qqid(info['behalf'])
 				temp_msg += f'({behalf}代刀)'
-			if info['damage'] > 0:
+			if (0 if info['damage'] is None else info['damage']) > 0:
 				temp_msg += f', 剩{info["s"]}秒，打了{info["damage"]}万伤害'
 			if info['tree']:
 				temp_msg += ', 已挂树'
@@ -1285,7 +1356,7 @@ def challenger_info(self, group_id):
 				if info['behalf']:
 					behalf = self._get_nickname_by_qqid(info['behalf'])[:4]
 					challenger_msg += f'({behalf}代)'
-				if info['damage'] > 0:
+				if (0 if info['damage'] is None else info['damage']) > 0:
 					challenger_msg += f'@{info["s"]}s,{info["damage"]}w'
 				if info['tree']:
 					challenger_msg += '(挂树)'
@@ -1303,10 +1374,12 @@ def challenger_info(self, group_id):
 			this_boss_data['cycle'], 
 			this_boss_data["health"],
 			this_boss_data["full_health"],
-			this_boss_data["name"],
+			boss_num_str + '-' + this_boss_data["name"],
 			this_boss_data["icon_id"],
-			extra_info
+			extra_info,
+			this_boss_data['is_next']
 		))
+	level_cycle = self._level_by_cycle(group.boss_cycle, group.game_server)
 	process_image = get_process_image(
 		[
 			GroupStateBlock(
@@ -1318,10 +1391,10 @@ def challenger_info(self, group_id):
 			),
 			GroupStateBlock(
 				title_text="阶段",
-				data_text=chr(65+self._level_by_cycle(group.boss_cycle, group.game_server)),
+				data_text=chr(65+level_cycle),
 				title_color=(255, 255, 255),
 				data_color=(255, 255, 255),
-				background_color=(3, 169, 244),
+				background_color=[(132, 1, 244), (115, 166, 231), (206, 105, 165), (206, 80, 66), (181, 105, 206)][level_cycle],
 			),
 		],
 		{"补偿": half_challenge_list}
@@ -1337,6 +1410,7 @@ def challenger_info(self, group_id):
 		result_image.save(USER_HEADERS_PATH.joinpath(file_name), format='JPEG', quality=95)
 		result_image.close()
 	return f"[CQ:image,file=file:///{str(USER_HEADERS_PATH.joinpath(file_name))}]"
+
 
 #出刀记录
 def challenge_record(self, group_id):
@@ -1514,7 +1588,3 @@ def get_member_list(self, group_id: Groupid) -> List[Dict[str, Any]]:
 			'sl': user.clan_member.last_save_slot,
 		})
 	return member_list
-
-
-
-
