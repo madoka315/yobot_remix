@@ -6,6 +6,13 @@ import platform
 import os
 import sys
 import random
+#############
+from PIL import Image,ImageDraw,ImageFont
+import base64
+import re
+from io import BytesIO
+FT = ImageFont.truetype(r'C:\Users\Administrator\Desktop\res\img\genshintunedata\font\text2pic.ttf',28)
+reg = '(报刀|查树|挂树|刀伤|尾刀|SL|sl|进度|撤销|预约|申请|取消|更新出刀|报伤|进)'
 
 if platform.system() == "Linux":
     if "-g" not in sys.argv[1:]:
@@ -110,8 +117,21 @@ def main():
         else:
             reply = None
         if isinstance(reply, str) and reply != "":
-            return {'reply': insert_zwsp(reply),
-                    'at_sender': False}
+            ##########
+            # print(context)
+            if re.match(reg, context["raw_message"]):
+                print('正则匹配成功')
+                text_width, text_height = FT.getsize_multiline(reply)
+                img = Image.new("RGB",(int(text_width*1.5)+20,text_height+40),(245,245,245))
+                draw = ImageDraw.Draw(img)
+                draw.multiline_text((20,20),reply, font=FT, fill='black')
+                buf = BytesIO()
+                img.save(buf, format='JPEG')
+                base64_str = f'base64://{base64.b64encode(buf.getvalue()).decode()}'
+                return {'reply':"[CQ:image,file="+base64_str+"]",'at_sender':False}
+            else:
+                return {'reply': insert_zwsp(reply),
+                        'at_sender': False}
         else:
             return None
 

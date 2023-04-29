@@ -530,7 +530,7 @@ def generate_combind_boss_state_image(image_list: List[Union[Image.Image, BossSt
     INTERVAL = 20
     SHADOW_BORDER = 5
 
-    background = BackGroundGenerator(color=(248, 239, 200), padding=(20, 20, 20 - SHADOW_BORDER, 20 - SHADOW_BORDER))
+    background = BackGroundGenerator(color=(240, 247, 255), padding=(20, 20, 20 - SHADOW_BORDER, 20 - SHADOW_BORDER))
     current_y_cursor = 0
     current_x_cursor = 0
     module_count = 0
