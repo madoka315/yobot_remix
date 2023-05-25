@@ -317,29 +317,29 @@ def execute(self, match_num, ctx):
             reply = f'刀伤查询失败，请前往面板查看\n{url}'
         return reply
             
-    elif match_num == 11:  # 挂树
-        #######
-        match = re.match(r'挂树 *([1-5])? *(?:[\:：](.*))? *(?:\[CQ:at,qq=(\d+)\])? *$', cmd)
-        if not match: return
-        extra_msg = match.group(2)
-        boss_num = match.group(1) and int(match.group(1))
-        boss_num = boss_num or False
-        behalf = match.group(3) and int(match.group(3))
-        #######
-        behalf = behalf or user_id
-        if isinstance(extra_msg, str):
-            extra_msg = extra_msg.strip()
-            if not extra_msg: extra_msg = None
-        try:
-            msg = self.put_on_the_tree(group_id, behalf, extra_msg, boss_num)
-            # if behalf:
-            #   sender = self._get_nickname_by_qqid(user_id)
-            #   self.behelf_remind(behalf, f'您的号被{sender}挂树上了。')
-        except ClanBattleError as e:
-            _logger.info('群聊 失败 {} {} {}'.format(user_id, group_id, cmd))
-            return str(e)
-        _logger.info('群聊 成功 {} {} {}'.format(user_id, group_id, cmd))
-        return msg
+    # elif match_num == 11:  # 挂树
+        # #######
+        # match = re.match(r'挂树 *([1-5])? *(?:[\:：](.*))? *(?:\[CQ:at,qq=(\d+)\])? *$', cmd)
+        # if not match: return
+        # extra_msg = match.group(2)
+        # boss_num = match.group(1) and int(match.group(1))
+        # boss_num = boss_num or False
+        # behalf = match.group(3) and int(match.group(3))
+        # #######
+        # behalf = behalf or user_id
+        # if isinstance(extra_msg, str):
+            # extra_msg = extra_msg.strip()
+            # if not extra_msg: extra_msg = None
+        # try:
+            # msg = self.put_on_the_tree(group_id, behalf, extra_msg, boss_num)
+            # # if behalf:
+            # #   sender = self._get_nickname_by_qqid(user_id)
+            # #   self.behelf_remind(behalf, f'您的号被{sender}挂树上了。')
+        # except ClanBattleError as e:
+            # _logger.info('群聊 失败 {} {} {}'.format(user_id, group_id, cmd))
+            # return str(e)
+        # _logger.info('群聊 成功 {} {} {}'.format(user_id, group_id, cmd))
+        # return msg
 
     elif match_num == 12:  # 申请
         match = re.match(r'^(?:进|申请出刀)(| )([1-5]) *(补偿|补|b|bc)? *(?:\[CQ:at,qq=(\d+)\])? *$', cmd)
@@ -359,6 +359,29 @@ def execute(self, match_num, ctx):
             return str(e)
         _logger.info('群聊 成功 {} {} {}'.format(user_id, group_id, cmd))
         return boss_info
+
+    elif match_num == 11:  # 挂树
+        match = re.match(r'挂树 *([1-5])? *(?:\[CQ:at,qq=(\d+)\])? *(?:[\:：](.*))? *$', cmd)
+        if not match: return
+        extra_msg = match.group(3)
+        boss_num = match.group(1) and int(match.group(1)) or False
+        behalf = match.group(2) and int(match.group(2))
+        if not behalf: behalf = None
+        # behalf = behalf or user_id
+        if isinstance(extra_msg, str):
+            extra_msg = extra_msg.strip()
+            if not extra_msg:
+                extra_msg = None
+        try:
+            msg = self.put_on_the_tree(group_id, user_id, extra_msg, boss_num, behalfed=behalf)
+            # if behalf:
+            #   sender = self._get_nickname_by_qqid(user_id)
+            #   self.behelf_remind(behalf, f'您的号被{sender}挂树上了。')
+        except ClanBattleError as e:
+            _logger.info('群聊 失败 {} {} {}'.format(user_id, group_id, cmd))
+            return str(e)
+        _logger.info('群聊 成功 {} {} {}'.format(user_id, group_id, cmd))
+        return msg
 
     elif match_num == 13:  # 取消
         match = re.match(r'^取消 *([1-5]|挂树|申请出刀|申请|出刀|出刀all|报伤害|sl|SL|预约) *([1-5])? *(?:\[CQ:at,qq=(\d+)\])? *$', cmd)
@@ -500,8 +523,7 @@ def execute(self, match_num, ctx):
             _logger.info('群聊 失败 {} {} {}'.format(user_id, group_id, cmd))
             return str(e)
 
-
-    elif match_num == 30:
+    elif match_num == 30:  #查树
         if len(cmd) != 2:
             return
         match = re.match(r'^查(树|[1-5]) *$', cmd)
